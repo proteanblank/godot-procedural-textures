@@ -63,6 +63,7 @@ func on_parameter_changed(p : String, v) -> void:
 		update_node()
 	else:
 		update_control_from_parameter(controls, p, v)
+		update_parameter_tooltip(p, v)
 	get_parent().set_need_save()
 
 static func initialize_controls_from_generator(control_list, generator, object) -> void:
@@ -103,21 +104,32 @@ static func initialize_controls_from_generator(control_list, generator, object) 
 func initialize_properties() -> void:
 	initialize_controls_from_generator(controls, generator, self)
 
+func update_parameter_tooltip(p : String, v):
+	if ! controls.has(p):
+		return
+	for d in generator.get_parameter_defs():
+		if d.name == p:
+			controls[p].hint_tooltip = get_parameter_tooltip(d, v)
+			break
+
 func _on_text_changed(new_text, variable : String) -> void:
 	ignore_parameter_change = variable
 	generator.set_parameter(variable, new_text)
+	update_parameter_tooltip(variable, new_text)
 	ignore_parameter_change = ""
 	get_parent().set_need_save()
 
 func _on_value_changed(new_value, variable : String) -> void:
 	ignore_parameter_change = variable
 	generator.set_parameter(variable, new_value)
+	update_parameter_tooltip(variable, new_value)
 	ignore_parameter_change = ""
 	get_parent().set_need_save()
 
 func _on_color_changed(new_color, variable : String) -> void:
 	ignore_parameter_change = variable
 	generator.set_parameter(variable, new_color)
+	update_parameter_tooltip(variable, new_color)
 	ignore_parameter_change = ""
 	get_parent().set_need_save()
 
@@ -144,6 +156,18 @@ func _on_polygon_changed(new_polygon, variable : String) -> void:
 	generator.set_parameter(variable, new_polygon.duplicate())
 	ignore_parameter_change = ""
 	get_parent().set_need_save()
+
+static func get_parameter_tooltip(p : Dictionary, parameter_value = null) -> String:
+	var tooltip : String
+	if p.has("shortdesc"):
+		tooltip = p.shortdesc+" ("+p.name+")"
+		if parameter_value != null:
+			tooltip += " = "+str(parameter_value)
+		if p.has("longdesc"):
+			tooltip += "\n"+p.longdesc
+	elif p.has("longdesc"):
+		tooltip += p.longdesc
+	return wrap_string(tooltip)
 
 static func create_parameter_control(p : Dictionary, accept_float_expressions : bool) -> Control:
 	var control = null
@@ -189,14 +213,7 @@ static func create_parameter_control(p : Dictionary, accept_float_expressions : 
 		if p.has("filters"):
 			for f in p.filters:
 				control.add_filter(f)
-	var tooltip : String
-	if p.has("shortdesc"):
-		tooltip = p.shortdesc+" ("+p.name+")"
-		if p.has("longdesc"):
-			tooltip += "\n"+p.longdesc
-	elif p.has("longdesc"):
-		tooltip += p.longdesc
-	control.hint_tooltip = wrap_string(tooltip)
+	control.hint_tooltip = get_parameter_tooltip(p)
 	return control
 
 func save_preview_widget() -> void:
@@ -433,7 +450,7 @@ func update_generator(shader_model) -> void:
 	get_parent().set_need_save()
 
 func load_generator() -> void:
-	var dialog = FileDialog.new()
+	var dialog = preload("res://material_maker/windows/file_dialog/file_dialog.tscn").instance()
 	add_child(dialog)
 	dialog.rect_min_size = Vector2(500, 500)
 	dialog.access = FileDialog.ACCESS_FILESYSTEM
@@ -443,9 +460,11 @@ func load_generator() -> void:
 		var config_cache = get_node("/root/MainWindow").config_cache
 		if config_cache.has_section_key("path", "template"):
 			dialog.current_dir = config_cache.get_value("path", "template")
-	dialog.connect("file_selected", self, "do_load_generator")
-	dialog.connect("popup_hide", dialog, "queue_free")
-	dialog.popup_centered()
+	var files = dialog.select_files()
+	while files is GDScriptFunctionState:
+		files = yield(files, "completed")
+	if files.size() > 0:
+		do_load_generator(files[0])
 
 func do_load_generator(file_name : String) -> void:
 	if get_node("/root/MainWindow") != null:
@@ -470,7 +489,7 @@ func do_load_generator(file_name : String) -> void:
 		call_deferred("update_node")
 
 func save_generator() -> void:
-	var dialog = FileDialog.new()
+	var dialog = preload("res://material_maker/windows/file_dialog/file_dialog.tscn").instance()
 	add_child(dialog)
 	dialog.rect_min_size = Vector2(500, 500)
 	dialog.access = FileDialog.ACCESS_FILESYSTEM
@@ -480,9 +499,11 @@ func save_generator() -> void:
 		var config_cache = get_node("/root/MainWindow").config_cache
 		if config_cache.has_section_key("path", "template"):
 			dialog.current_dir = config_cache.get_value("path", "template")
-	dialog.connect("file_selected", self, "do_save_generator")
-	dialog.connect("popup_hide", dialog, "queue_free")
-	dialog.popup_centered()
+	var files = dialog.select_files()
+	while files is GDScriptFunctionState:
+		files = yield(files, "completed")
+	if files.size() > 0:
+		do_save_generator(files[0])
 
 func do_save_generator(file_name : String) -> void:
 	if get_node("/root/MainWindow") != null:
