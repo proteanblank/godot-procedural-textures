@@ -46,9 +46,10 @@ func get_point_position(i : int) -> float:
 
 func set_point_position(i : int, v : float) -> void:
 	points[i].v = v
+	sorted = false
 
 func sort() -> void:
-	if !sorted:
+	if ! sorted:
 		points.sort_custom(Callable(CustomSorter, "compare"))
 		for i in range(points.size()-1):
 			if points[i].v+0.0000005 >= points[i+1].v:
@@ -73,18 +74,30 @@ func get_color(x) -> Color:
 		return Color(0.0, 0.0, 0.0, 1.0)
 
 func get_shader_params(parameter_name : String, attribute : String = "uniform") -> String:
-	sort()
 	var rv = ""
-	for i in range(points.size()):
-		rv += "%s float p_%s_%d_pos = %.09f;\n" % [ attribute, parameter_name, i, points[i].v ]
-		rv += "%s vec4 p_%s_%d_col = vec4(%.09f, %.09f, %.09f, %.09f);\n" % [ attribute, parameter_name, i, points[i].c.r, points[i].c.g, points[i].c.b, points[i].c.a ]
+	for p : MMGenBase.ShaderUniform in get_parameters(parameter_name):
+		rv += p.to_str(attribute)
 	return rv
+
 
 func get_parameters(parameter_name : String) -> Array[MMGenBase.ShaderUniform]:
 	var rv : Array[MMGenBase.ShaderUniform] = []
+	var parameter_values : Dictionary = get_parameter_values(parameter_name)
+	rv.append(MMGenBase.ShaderUniform.new("p_%s_pos" % parameter_name, "float", parameter_values["p_%s_pos" % parameter_name], points.size()))
+	rv.append(MMGenBase.ShaderUniform.new("p_%s_col" % parameter_name, "vec4", parameter_values["p_%s_col" % parameter_name], points.size()))
+	return rv
+
+
+func get_parameter_values(parameter_name : String) -> Dictionary:
+	sort()
+	var rv : Dictionary = {}
+	var point_positions : PackedFloat32Array = PackedFloat32Array()
+	var point_colors : PackedColorArray = PackedColorArray()
 	for i in range(points.size()):
-		rv.append(MMGenBase.ShaderUniform.new("p_%s_%d_pos" % [ parameter_name, i ], "float", points[i].v))
-		rv.append(MMGenBase.ShaderUniform.new("p_%s_%d_col" % [ parameter_name, i ], "vec4", points[i].c))
+		point_positions.append(points[i].v)
+		point_colors.append(points[i].c)
+	rv["p_%s_pos" % parameter_name] = point_positions
+	rv["p_%s_col" % parameter_name] = point_colors
 	return rv
 
 # get_color_in_shader
@@ -92,10 +105,10 @@ func gcis(color : Color) -> String:
 	return "vec4(%.9f,%.9f,%.9f,%.9f)" % [color.r, color.g, color.b, color.a]
 
 func pv(parameter_name : String, i : int) -> String:
-	return "p_"+parameter_name+"_"+str(i)+"_pos"
+	return "p_"+parameter_name+"_pos["+str(i)+"]"
 
 func pc(parameter_name : String, i : int) -> String:
-	return "p_"+parameter_name+"_"+str(i)+"_col"
+	return "p_"+parameter_name+"_col["+str(i)+"]"
 
 func get_shader(parameter_name : String) -> String:
 	sort()
@@ -104,11 +117,11 @@ func get_shader(parameter_name : String) -> String:
 	match interpolation:
 		0:
 			if points.size() > 0:
-				shader += "  if (x < 0.5*(%s+%s)) {\n" % [ pv(parameter_name, 0), pv(parameter_name, 1) ]
+				shader += "  if (x < %s) {\n" % pv(parameter_name, 1)
 				shader += "    return "+pc(parameter_name, 0)+";\n"
 				var s = points.size()-1
 				for i in range(1, s):
-					shader += "  } else if (x < 0.5*(%s+%s)) {\n" % [ pv(parameter_name, i), pv(parameter_name, i+1) ]
+					shader += "  } else if (x < %s) {\n" % pv(parameter_name, i+1)
 					shader += "    return "+pc(parameter_name, i)+";\n"
 				shader += "  }\n"
 				shader += "  return "+pc(parameter_name, s)+";\n"
@@ -161,8 +174,17 @@ func get_shader(parameter_name : String) -> String:
 func serialize() -> Dictionary:
 	sort()
 	var rv = []
-	for p in points:
-		rv.append({ pos=p.v, r=p.c.r, g=p.c.g, b=p.c.b, a=p.c.a })
+	if interpolation == 0:
+		var p : Point = points[0]
+		rv.append({ pos=0, r=p.c.r, g=p.c.g, b=p.c.b, a=p.c.a })
+		for i in range(1, points.size()):
+			var next_p : Point = points[i]
+			rv.append({ pos=next_p.v-0.00001, r=p.c.r, g=p.c.g, b=p.c.b, a=p.c.a })
+			p = next_p
+			rv.append({ pos=next_p.v+0.00001, r=p.c.r, g=p.c.g, b=p.c.b, a=p.c.a })
+	else:
+		for p in points:
+			rv.append({ pos=p.v, r=p.c.r, g=p.c.g, b=p.c.b, a=p.c.a })
 	rv = { type="Gradient", points=rv, interpolation=interpolation }
 	return rv
 
@@ -172,12 +194,20 @@ func deserialize(v) -> void:
 		for i in v:
 			if !i.has("a"): i.a = 1.0
 			add_point(i.pos, Color(i.r, i.g, i.b, i.a))
+			interpolation = 1
 	elif typeof(v) == TYPE_DICTIONARY and v.has("type") && v.type == "Gradient":
 		for i in v.points:
 			if !i.has("a"): i.a = 1.0
 			add_point(i.pos, Color(i.r, i.g, i.b, i.a))
 		if v.has("interpolation"):
 			interpolation = int(v.interpolation)
+			if interpolation == 0:
+				for i in range(points.size()-1, 0, -1):
+					if points[i].c == points[i-1].c:
+						points.remove_at(i)
+					else:
+						points[i].v = 0.5*(points[i-1].v+points[i].v)
+				points[0].v = 0
 		else:
 			interpolation = 1
 	elif typeof(v) == TYPE_OBJECT and v.get_script() == get_script():

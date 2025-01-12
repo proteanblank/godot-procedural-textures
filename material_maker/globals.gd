@@ -30,17 +30,15 @@ const DEFAULT_CONFIG : Dictionary = {
 
 
 func _enter_tree():
-	config.load("user://cache.ini")
+	config.load("user://mm_config.ini")
 	for k : String in DEFAULT_CONFIG.keys():
 		if ! config.has_section_key("config", k):
 			config.set_value("config", k, DEFAULT_CONFIG[k])
 
 func _exit_tree():
-	config.save("user://cache.ini")
+	config.save("user://mm_config.ini")
 
-func _ready():
-	pass # Replace with function body.
-
+# Config
 
 func has_config(key : String) -> bool:
 	return config.has_section_key("config", key)
@@ -56,6 +54,7 @@ func get_config(key : String):
 func set_config(key : String, value):
 	config.set_value("config", key, value)
 
+# Clipboard parsing
 
 func try_parse_palette(hex_values_str : String) -> Dictionary:
 	var points = []
@@ -141,5 +140,33 @@ func parse_paste_data(data : String):
 	last_parsed_paste_data = { type=type, graph=graph }
 	return { type=type, graph=graph }
 
+# Misc. UI functions
+
+static func popup_menu(menu : PopupMenu, parent : Control):
+	menu.popup(Rect2(parent.get_local_mouse_position()+parent.get_screen_position(), Vector2(0, 0)))
+
 func set_tip_text(tip : String, timeout : float = 0.0):
 	main_window.set_tip_text(tip, timeout)
+
+static func do_propagate_shortcuts(control : Control, event : InputEvent):
+	for child in control.get_children():
+		if not child is Control:
+			continue
+		if child is Button:
+			if child.shortcut and child.shortcut.matches_event(event):
+				control.accept_event()
+				if child.toggle_mode:
+					child.button_pressed = not child.button_pressed
+					child.toggled.emit(child.button_pressed)
+				if child is MM_OptionEdit:
+					child.roll()
+				else:
+					child.pressed.emit()
+		do_propagate_shortcuts(child, event)
+
+static func propagate_shortcuts(control : Control, event : InputEvent):
+	if not control.shortcut_context:
+		return
+	if not control.shortcut_context.get_global_rect().has_point(control.get_global_mouse_position()):
+		return
+	do_propagate_shortcuts(control, event)
