@@ -10,7 +10,6 @@ var timer : Timer
 var filetime : int = 0
 var current_mesh : Mesh = null
 var current_map : MMTexture = null
-var texture : MMTexture
 
 
 const MESH_MAPS : Array[Dictionary] = [
@@ -75,11 +74,18 @@ const MESH_MAPS : Array[Dictionary] = [
 		output_type="f",
 		map="thickness",
 		output="texture($TEXTURE, $UV).r"
+	},
+	{
+		name="Adjacency",
+		output_type="rgb",
+		map="adjacency",
+		output="texture($TEXTURE, $UV).rgb"
 	}
 ]
 
 
 func _ready() -> void:
+	super._ready()
 	if get_parent() is MMGenGraph:
 		set_current_mesh(get_parent().get_current_mesh())
 
@@ -94,23 +100,24 @@ func get_parameter_defs() -> Array:
 		{ name="map", type="enum", values=MESH_MAPS, label="Map", default=0 },
 	]
 
+func update_map() -> void:
+	current_map = await MMMapGenerator.get_map(current_mesh, MESH_MAPS[get_parameter("map")].map)
+	notify_output_change(0)
+	mm_deps.dependency_update(get_texture_parameter_name(), current_map, true)
+
 func set_parameter(n : String, v) -> void:
 	super.set_parameter(n, v)
-	if n == "map" and current_mesh:
-		current_map = await MMMapGenerator.get_map(current_mesh, MESH_MAPS[v].map)
-		notify_output_change(0)
-		mm_deps.dependency_update(get_texture_parameter_name(), current_map, true)
+	if n == "map":
+		update_map()
 
 func get_output_defs(_show_hidden : bool = false) -> Array:
 	return [ { type=MESH_MAPS[get_parameter("map")].output_type } ]
 
 func set_current_mesh(m : Mesh) -> void:
 	if current_mesh != m:
+		print("Setting mesh ", m)
 		current_mesh = m
-		if current_mesh:
-			current_map = await MMMapGenerator.get_map(current_mesh, MESH_MAPS[get_parameter("map")].map)
-			notify_output_change(0)
-			mm_deps.dependency_update(get_texture_parameter_name(), current_map, true)
+		update_map()
 
 func get_texture_parameter_name() -> String:
 	var mesh_id : String = "nomesh"
@@ -136,10 +143,11 @@ func _get_shader_code(uv : String, output_index : int, context : MMGenContext) -
 		code = code.replace("$NODE", "o%d" % get_instance_id())
 		code = code.replace("$TEXTURE", texture_name)
 		code = code.replace("$UV", uv)
+		var aabb : AABB
 		if current_mesh:
-			var aabb : AABB = current_mesh.get_aabb()
-			code = code.replace("$AABB_POSITION", "vec3(%.09f, %.09f, %.09f)" % [aabb.position.x, aabb.position.y, aabb.position.z])
-			code = code.replace("$AABB_SIZE", "vec3(%.09f, %.09f, %.09f)" % [aabb.size.x, aabb.size.y, aabb.size.z])
+			aabb = current_mesh.get_aabb()
+		code = code.replace("$AABB_POSITION", "vec3(%.09f, %.09f, %.09f)" % [aabb.position.x, aabb.position.y, aabb.position.z])
+		code = code.replace("$AABB_SIZE", "vec3(%.09f, %.09f, %.09f)" % [aabb.size.x, aabb.size.y, aabb.size.z])
 		rv.code = code
 	rv.output_values[rv.output_type] = "%s_%d" % [ genname, variant_index ]
 	return rv

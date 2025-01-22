@@ -136,8 +136,13 @@ class MenuDisplayServer:
 	func add_item(label: String, id: int = -1, accel : Key = 0 as Key):
 		if accel & KEY_MASK_CTRL:
 			accel = ((accel & ~KEY_MASK_CTRL) | KEY_MASK_META) as Key
-		var key = str(get_instance_id())+","+str(id)
-		var index : int = DisplayServer.global_menu_add_item(menu_name, label, mm_globals.menu_manager.my_callback, mm_globals.menu_manager.my_callback, key, accel)
+		var tag = str(get_instance_id())+","+str(id)
+		var callback : Callable = mm_globals.menu_manager.my_callback
+		var index : int = DisplayServer.global_menu_add_item(menu_name, label, callback, callback, tag, accel)
+		if id == -1:
+			id = index
+			tag = str(get_instance_id())+","+str(id)
+			DisplayServer.global_menu_set_item_tag(menu_name, index, tag)
 		indexes[id] = index
 	
 	func add_icon_item(_icon: Texture2D, label: String, id: int = -1, accel: Key = 0 as Key):
@@ -147,7 +152,8 @@ class MenuDisplayServer:
 		if accel & KEY_MASK_CTRL:
 			accel = ((accel & ~KEY_MASK_CTRL) | KEY_MASK_META) as Key
 		var key = str(get_instance_id())+","+str(id)
-		var index : int = DisplayServer.global_menu_add_check_item(menu_name, label, mm_globals.menu_manager.my_callback, mm_globals.menu_manager.my_callback, key, accel)
+		var callback : Callable = mm_globals.menu_manager.my_callback
+		var index : int = DisplayServer.global_menu_add_check_item(menu_name, label, callback, callback, key, accel)
 		indexes[id] = index
 			
 	func add_separator():
@@ -155,11 +161,13 @@ class MenuDisplayServer:
 	
 	func set_item_disabled(id : int, disabled : bool):
 		if indexes.has(id):
-			DisplayServer.global_menu_set_item_disabled(menu_name, indexes[id], disabled)
+			var index : int = indexes[id]
+			DisplayServer.global_menu_set_item_disabled(menu_name, index, disabled)
 	
 	func set_item_checked(id : int, checked : bool):
 		if indexes.has(id):
-			DisplayServer.global_menu_set_item_checked(menu_name, indexes[id], checked)
+			var index : int = indexes[id]
+			DisplayServer.global_menu_set_item_checked(menu_name, index, checked)
 	
 	func add_submenu(name : String) -> MenuBase:
 		var full_name : String = menu_name+"/"+name
@@ -189,7 +197,7 @@ func my_callback(param):
 	var callable : Callable = menu_callables[split_param[0].to_int()]
 	callable.call(split_param[1].to_int())
 
-func create_menus(menu_def, object, menu_bar : MenuBarBase) -> void:
+func create_menus(menu_def : Array[Dictionary], object : Object, menu_bar : MenuBarBase) -> void:
 	menu_bar.create_menus(menu_def, object)
 
 func create_menu(menu_def : Array, object : Object, menu_name : String, menu : MenuBase) -> MenuBase:

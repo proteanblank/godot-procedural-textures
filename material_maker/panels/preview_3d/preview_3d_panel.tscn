@@ -39,14 +39,13 @@ click_material = SubResource("2")
 
 [node name="MaterialPreview" parent="." index="0"]
 world_3d = SubResource("World3D_3xlky")
-size = Vector2i(1280, 720)
+size = Vector2i(250, 200)
 
 [node name="TextureRect" type="TextureRect" parent="." index="1"]
 visible = false
 layout_mode = 2
 mouse_filter = 2
 expand_mode = 1
-flip_v = true
 
 [node name="UI" type="PanelContainer" parent="." index="2"]
 layout_mode = 2
@@ -54,10 +53,9 @@ layout_mode = 2
 [node name="Preview3DUI" parent="UI" index="0" instance=ExtResource("2")]
 layout_mode = 2
 
-[node name="PopupMenu" type="PopupMenu" parent="." index="4"]
+[node name="PopupMenu" type="PopupMenu" parent="." index="3"]
 item_count = 2
 item_0/text = "Reset center"
-item_0/id = 0
 item_1/text = "Center on clicked surface"
 item_1/id = 1
 
