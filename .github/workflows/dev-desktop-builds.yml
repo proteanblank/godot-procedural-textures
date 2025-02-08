@@ -2,30 +2,33 @@ name: "dev-desktop-builds"
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
   workflow_dispatch:
     inputs:
       sign_macos:
-        description: 'Sign macOS version'     
+        description: "Sign macOS version"
         type: boolean
         required: true
-        default: 'false'
+        default: "false"
+      gen_doc:
+        description: "Generate documentation"
+        type: boolean
+        required: true
+        default: "true"
 
 env:
-  GODOT_VERSION: 4.2
-  GODOT_SUB: beta5
-  GODOT_DOWNLOAD_DIR: https://github.com/godotengine/godot-builds/releases/download/4.2-beta5
+  GODOT_VERSION: 4.4
+  GODOT_SUB: beta3
+  GODOT_DOWNLOAD_DIR: https://github.com/godotengine/godot-builds/releases/download/4.4-beta3
   EXPORT_NAME: material_maker
-  MM_RELEASE: 1_4a1
+  MM_RELEASE: 1_4a3
 
 jobs:
   export_windows_linux:
     name: Export Windows and Linux 🗔
     runs-on: ubuntu-latest
-    container:
-      image: docker://barichello/godot-ci:3.5
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v1
@@ -33,14 +36,15 @@ jobs:
           submodules: true
       - name: Setup 💻
         run: |
+          cp -f material_maker/theme/default_theme_icons.svg material_maker/theme/default_theme_icons_export.svg
           wget -q ${GODOT_DOWNLOAD_DIR}/Godot_v${GODOT_VERSION}-${GODOT_SUB}_linux.x86_64.zip
           unzip Godot_v${GODOT_VERSION}-${GODOT_SUB}_linux.x86_64.zip
           wget -q ${GODOT_DOWNLOAD_DIR}/Godot_v${GODOT_VERSION}-${GODOT_SUB}_export_templates.tpz
           unzip -a Godot_v${GODOT_VERSION}-${GODOT_SUB}_export_templates.tpz
           mkdir -v -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_SUB}
           mv ./templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_SUB}
-          dpkg --add-architecture i386 && apt-get update && apt-get install -y wine-stable && apt-get install -y wine32
-          chown root:root -R ~
+          sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine-stable && sudo apt-get install -y wine32
+          #chown root:root -R ~
           wget -q https://github.com/electron/rcedit/releases/download/v1.1.1/rcedit-x64.exe
           mkdir -v -p ~/.local/share/rcedit
           mv rcedit-x64.exe ~/.local/share/rcedit
@@ -55,6 +59,7 @@ jobs:
           echo 'export/windows/rcedit = "'$RCEDIT_PATH'/rcedit-x64.exe"' >> ~/.config/godot/editor_settings-4.tres
           mkdir -v -p build/${EXPORT_NAME}_${MM_RELEASE}_windows build/${EXPORT_NAME}_${MM_RELEASE}_linux
       - name: Generate Documentation
+        if: ${{ github.event.inputs.gen_doc == 'true' }}
         uses: ammaraskar/sphinx-action@master
         with:
           docs-folder: "material_maker/doc"
@@ -74,31 +79,32 @@ jobs:
           cp -R ./material_maker/library ./build/${EXPORT_NAME}_${MM_RELEASE}_windows
           cp -R ./material_maker/meshes ./build/${EXPORT_NAME}_${MM_RELEASE}_windows
           cp -R ./material_maker/misc/export ./build/${EXPORT_NAME}_${MM_RELEASE}_windows
-          cp -R ./material_maker/doc/_build/html ./build/${EXPORT_NAME}_${MM_RELEASE}_windows/doc
+          cp -R ./material_maker/doc/_build/html ./build/${EXPORT_NAME}_${MM_RELEASE}_windows/doc || :
           cp -R ./addons/material_maker/nodes ./build/${EXPORT_NAME}_${MM_RELEASE}_linux
           cp -R ./material_maker/environments ./build/${EXPORT_NAME}_${MM_RELEASE}_linux
           cp -R ./material_maker/examples ./build/${EXPORT_NAME}_${MM_RELEASE}_linux
           cp -R ./material_maker/library ./build/${EXPORT_NAME}_${MM_RELEASE}_linux
           cp -R ./material_maker/meshes ./build/${EXPORT_NAME}_${MM_RELEASE}_linux
           cp -R ./material_maker/misc/export ./build/${EXPORT_NAME}_${MM_RELEASE}_linux
-          cp -R ./material_maker/doc/_build/html ./build/${EXPORT_NAME}_${MM_RELEASE}_linux/doc
+          cp -R ./material_maker/doc/_build/html ./build/${EXPORT_NAME}_${MM_RELEASE}_linux/doc || :
       - name: Create archives 📁
         run: |
           cd build
           zip -r ${EXPORT_NAME}_${MM_RELEASE}_windows.zip ${EXPORT_NAME}_${MM_RELEASE}_windows
           tar zcvf ${EXPORT_NAME}_${MM_RELEASE}_linux.tar.gz ${EXPORT_NAME}_${MM_RELEASE}_linux
       - name: Upload Documentation 🚀
-        uses: actions/upload-artifact@v3
+        if: ${{ github.event.inputs.gen_doc == 'true' }}
+        uses: actions/upload-artifact@v4
         with:
           name: documentation
           path: ./material_maker/doc/_build/html
       - name: Upload Windows Artifact 🚀
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: windows_snapshot
           path: build/${{ env.EXPORT_NAME }}_${{ env.MM_RELEASE }}_windows.zip
       - name: Upload Linux Artifact 🚀
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: linux_snapshot
           path: build/${{ env.EXPORT_NAME }}_${{ env.MM_RELEASE }}_linux.tar.gz
@@ -113,6 +119,7 @@ jobs:
           submodules: true
       - name: Setup environment 🔧
         run: |
+          cp -f material_maker/theme/default_theme_icons.svg material_maker/theme/default_theme_icons_export.svg
           export GODOT_VERSION=${GODOT_VERSION}
           export EXPORT_NAME=material_maker
       - name: Install the Apple certificate and provisioning profile
@@ -167,7 +174,8 @@ jobs:
       - name: Fix application icon 🖼
         run: sips -s format icns "./build/mac/Material Maker.app/Contents/Resources/icon.icns" --out "./build/mac/Material Maker.app/Contents/Resources/icon.icns"
       - name: Get documentation 🚀
-        uses: actions/download-artifact@v3
+        if: ${{ github.event.inputs.gen_doc == 'true' }}
+        uses: actions/download-artifact@v4
         with:
           name: documentation
           path: doc
@@ -179,7 +187,7 @@ jobs:
           cp -R ./material_maker/library "./build/mac/Material Maker.app/Contents/MacOS"
           cp -R ./material_maker/meshes "./build/mac/Material Maker.app/Contents/MacOS"
           cp -R ./material_maker/misc/export "./build/mac/Material Maker.app/Contents/MacOS"
-          cp -R ./doc "./build/mac/Material Maker.app/Contents/MacOS/doc"
+          cp -R ./doc "./build/mac/Material Maker.app/Contents/MacOS/doc" || :
       - name: Ad-hoc signing ✍️
         if: ${{ github.event.inputs.sign_macos != 'true' }}
         run: |
@@ -189,7 +197,11 @@ jobs:
         run: |
           codesign -s "Rodolphe Suescun" --force --options runtime --timestamp --deep "./build/mac/Material Maker.app"
       - name: Create DMG archive 🔧
-        run: hdiutil create -srcfolder ./build/mac -fs HFS+ -volname material_maker ./build/mac/material_maker_${{ env.MM_RELEASE }}.dmg
+        run: |
+          #hdiutil create -srcfolder ./build/mac -fs HFS+ -volname material_maker material_maker_${{ env.MM_RELEASE }}.dmg
+          wget https://github.com/create-dmg/create-dmg/archive/refs/tags/v1.2.2.zip
+          unzip v1.2.2.zip
+          create-dmg-1.2.2/create-dmg --volname "Material Maker" --icon-size 128 --background splash_screen/backgrounds/pavel_oliva_vintage_luggage.png --window-size 540 330 --icon "Material Maker.app" 158 125 --app-drop-link 384 125 --hide-extension "Material Maker.app" ./build/mac/material_maker_${{ env.MM_RELEASE }}.dmg ./build/mac
       - name: Notarizing ✍️
         if: ${{ github.event.inputs.sign_macos == 'true' }}
         env:
@@ -200,7 +212,7 @@ jobs:
           xcrun notarytool submit ./build/mac/material_maker_${{ env.MM_RELEASE }}.dmg --apple-id $APPLE_ID --password $NOTARYTOOL_APP_PASSWORD --team-id $APPLE_TEAM_ID --wait
           xcrun stapler staple ./build/mac/material_maker_${{ env.MM_RELEASE }}.dmg
       - name: Upload Mac OSX Artifact 🚀
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: macos_snapshot
           path: ./build/mac/material_maker_${{ env.MM_RELEASE }}.dmg

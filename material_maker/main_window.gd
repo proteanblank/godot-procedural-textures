@@ -1,4 +1,4 @@
-extends Panel
+extends Control
 
 var quitting : bool = false
 
@@ -23,7 +23,8 @@ var preview_tesselation_detail : int = 256
 @onready var node_library_manager = $NodeLibraryManager
 @onready var brush_library_manager = $BrushLibraryManager
 
-@onready var projects = $VBoxContainer/Layout/SplitRight/ProjectsPanel/Projects
+
+@onready var projects_panel = $VBoxContainer/Layout/FlexibleLayout/Main
 
 @onready var layout = $VBoxContainer/Layout
 var library
@@ -33,11 +34,8 @@ var preview_3d
 var hierarchy
 var brushes
 
-@onready var preview_2d_background = $VBoxContainer/Layout/SplitRight/ProjectsPanel/BackgroundPreviews/Preview2D
-@onready var preview_2d_background_button = $VBoxContainer/Layout/SplitRight/ProjectsPanel/PreviewUI/Preview2DButton
-@onready var preview_3d_background = $VBoxContainer/Layout/SplitRight/ProjectsPanel/BackgroundPreviews/Preview3D
-@onready var preview_3d_background_button = $VBoxContainer/Layout/SplitRight/ProjectsPanel/PreviewUI/Preview3DButton
-@onready var preview_3d_background_panel = $VBoxContainer/Layout/SplitRight/ProjectsPanel/PreviewUI/Panel
+
+var current_mesh : Mesh = null
 
 
 const FPS_LIMIT_MIN = 20
@@ -47,9 +45,9 @@ const IDLE_FPS_LIMIT_MAX = 100
 
 const RECENT_FILES_COUNT = 15
 
-const THEMES = [ "Dark", "Default", "Green", "Birch", "Mangosteen",  "Light" ]
+const THEMES = ["Default Dark", "Default Light", "Classic"]
 
-const MENU = [
+const MENU : Array[Dictionary] = [
 	{ menu="File/New material", command="new_material", shortcut="Control+N" },
 	{ menu="File/New paint project", command="new_paint_project", shortcut="Control+Shift+N", not_in_ports=["HTML5"] },
 	{ menu="File/Load", command="load_project", shortcut="Control+O" },
@@ -120,36 +118,36 @@ func _ready() -> void:
 	get_window().borderless = false
 	get_window().transparent = false
 	get_window().move_to_foreground()
-	#get_window().gui_embed_subwindows = false
-	
+	get_window().gui_embed_subwindows = false
+
 	get_window().close_requested.connect(self.on_close_requested)
-	
+
 	get_tree().set_auto_accept_quit(false)
-	
+
 	if mm_globals.get_config("locale") == "":
 		mm_globals.set_config("locale", TranslationServer.get_locale())
-	
+
 	on_config_changed()
-	
+
 	# Restore the window position/size if values are present in the configuration cache
 	if mm_globals.config.has_section_key("window", "screen"):
 		get_window().current_screen = mm_globals.config.get_value("window", "screen")
-	
+
 	if mm_globals.config.has_section_key("window", "maximized"):
 		get_window().mode = Window.MODE_MAXIMIZED if (mm_globals.config.get_value("window", "maximized")) else Window.MODE_WINDOWED
-	
+
 	if get_window().mode != Window.MODE_MAXIMIZED:
 		if mm_globals.config.has_section_key("window", "position"):
 			get_window().position = mm_globals.config.get_value("window", "position")
 		if mm_globals.config.has_section_key("window", "size"):
 			get_window().size = mm_globals.config.get_value("window", "size")
-	
+
 	# Restore the theme
-	var theme_name : String = "default"
+	var theme_name: String = "default dark"
 	if mm_globals.config.has_section_key("window", "theme"):
 		theme_name = mm_globals.config.get_value("window", "theme")
 	change_theme(theme_name)
-	
+
 	# In HTML5 export, copy all examples to the filesystem
 	if OS.get_name() == "HTML5":
 		print("Copying samples")
@@ -163,14 +161,13 @@ func _ready() -> void:
 			if f.ends_with(".ptex"):
 				print(f)
 				dir.copy("res://material_maker/examples/"+f, "/examples/"+f)
-		print("Done")
-	
+
 	# Set a minimum window size to prevent UI elements from collapsing on each other.
 	get_window().min_size = Vector2(1024, 600)
-	
+
 	# Set window title
 	get_window().set_title(ProjectSettings.get_setting("application/config/name")+" v"+ProjectSettings.get_setting("application/config/actual_release"))
-	
+
 	layout.load_panels()
 	library = get_panel("Library")
 	preview_2d = [ get_panel("Preview2D"), get_panel("Preview2D (2)") ]
@@ -180,22 +177,28 @@ func _ready() -> void:
 	hierarchy = get_panel("Hierarchy")
 	hierarchy.connect("group_selected", self.on_group_selected)
 	brushes = get_panel("Brushes")
-	
+
 	# Load recent projects
 	load_recents()
-	
+
 	get_window().connect("files_dropped", self.on_files_dropped)
-	
+
 	var args : PackedStringArray = OS.get_cmdline_args()
 	for a in args:
-		if a.get_extension() == "ptex":
+		if a.get_extension().to_lower() in [ "ptex", "mmpp" ]:
 			do_load_project(get_file_absolute_path(a))
-		elif a.get_extension() == "obj":
+		elif a.get_extension().to_lower() in [ "obj", "glb", "gltf" ]:
 			var mesh_filename : String = get_file_absolute_path(a)
-			var mesh : Mesh = load(mesh_filename)
+			if mesh_filename == "":
+				push_error("Cannot load mesh from '%s' (no such file or directory)" % a)
+				continue
+			var mesh : Mesh = MMMeshLoader.load_mesh(mesh_filename)
+			if mesh == null:
+				push_error("Cannot load mesh from '%s'" % mesh_filename)
+				continue
 			var project_filename : String = mesh_filename.get_basename()+".mmpp"
 			create_paint_project(mesh, mesh_filename, 1024, project_filename)
-	
+
 	# Rescue unsaved projects
 	if true:
 		var dir : DirAccess = DirAccess.open("user://unsaved_projects")
@@ -204,26 +207,37 @@ func _ready() -> void:
 			dir.list_dir_begin() # TODOGODOT4 fill missing arguments https://github.com/godotengine/godot/pull/40547
 			var file_name = dir.get_next()
 			while file_name != "":
-				file_name = dir.get_next()
 				if !dir.current_is_dir() and file_name.get_extension() == "mmcr":
 					files.append("user://unsaved_projects".path_join(file_name))
-					print(file_name)
+				file_name = dir.get_next()
 			if ! files.is_empty():
-				for f in files:
-					var graph_edit = new_graph_panel()
-					graph_edit.load_from_recovery(f)
-					graph_edit.update_tab_title()
-				hierarchy.update_from_graph_edit(get_current_graph_edit())
-				var dialog = preload("res://material_maker/windows/accept_dialog/accept_dialog.tscn").instantiate()
-				dialog.dialog_text = "Oops, it seems Material Maker crashed and rescued unsaved work"
-				add_child(dialog)
-				await dialog.ask()
-	
+				var dialog_text : String = "Oops, it seems Material Maker crashed and rescued unsaved work\nLoad %d unsaved projects?" % files.size()
+				var result = await accept_dialog(dialog_text, true, [ { label="Delete them!", action="delete" } ])
+				match result:
+					"ok":
+						for f in files:
+							var graph_edit = new_graph_panel()
+							graph_edit.load_from_recovery(f)
+							graph_edit.update_tab_title()
+						hierarchy.update_from_graph_edit(get_current_graph_edit())
+					"delete":
+						for f in files:
+							DirAccess.remove_absolute(f)
+
 	if get_current_graph_edit() == null:
 		await get_tree().process_frame
 		new_material()
-	
+
+	size = get_window().size
+	position = Vector2.ZERO
+	set_anchors_preset(Control.PRESET_FULL_RECT)
 	update_menus()
+
+	mm_logger.message("Material Maker "+ProjectSettings.get_setting("application/config/actual_release"))
+
+	size = get_viewport().size/get_viewport().content_scale_factor
+	position = Vector2i(0, 0)
+
 
 var menu_update_requested : bool = false
 
@@ -277,8 +291,10 @@ func on_config_changed() -> void:
 		# This prevents UI elements from being too small on hiDPI displays.
 		ui_scale = 2 if DisplayServer.screen_get_dpi() >= 192 and DisplayServer.screen_get_size().x >= 2048 else 1
 	get_viewport().content_scale_factor = ui_scale
+	size = get_viewport().size/get_viewport().content_scale_factor
+	position = Vector2i(0, 0)
 	#ProjectSettings.set_setting("display/window/stretch/scale", scale)
-	
+
 	# Clamp to reasonable values to avoid crashes on startup.
 	preview_rendering_scale_factor = clamp(mm_globals.get_config("ui_3d_preview_resolution"), 1.0, 2.0)
 # warning-ignore:narrowing_conversion
@@ -288,10 +304,10 @@ func get_panel(panel_name : String) -> Control:
 	return layout.get_panel(panel_name)
 
 func get_current_project() -> Control:
-	return projects.get_current_tab_control()
+	return projects_panel.get_projects().get_current_tab_control()
 
 func get_current_graph_edit() -> MMGraphEdit:
-	var graph_edit = projects.get_current_tab_control()
+	var graph_edit = projects_panel.get_projects().get_current_tab_control()
 	if graph_edit != null and graph_edit.has_method("get_graph_edit"):
 		return graph_edit.get_graph_edit()
 	return null
@@ -327,14 +343,14 @@ func _on_LoadRecent_id_pressed(id) -> void:
 
 func load_recents() -> void:
 	var f : FileAccess = FileAccess.open("user://recent_files.bin", FileAccess.READ)
-	if f.is_open():
+	if f != null:
 		var test_json_conv = JSON.new()
 		test_json_conv.parse(f.get_as_text())
 		recent_files = test_json_conv.get_data()
 
 func save_recents() -> void:
 	var f : FileAccess = FileAccess.open("user://recent_files.bin", FileAccess.WRITE)
-	if f.is_open():
+	if f != null:
 		f.store_string(JSON.stringify(recent_files))
 
 func add_recent(path, save = true) -> void:
@@ -460,7 +476,15 @@ func create_menu_set_theme(menu : MMMenuManager.MenuBase) -> void:
 	menu.connect_id_pressed(self._on_SetTheme_id_pressed)
 
 func change_theme(theme_name) -> void:
-	theme = load("res://material_maker/theme/"+theme_name+".tres")
+	if not ResourceLoader.exists("res://material_maker/theme/"+theme_name+".tres"):
+		theme_name = "default dark"
+	var _theme = load("res://material_maker/theme/"+theme_name+".tres")
+	if _theme == theme:
+		return
+	if _theme is EnhancedTheme:
+		_theme.update()
+	await get_tree().process_frame
+	theme = _theme
 	$NodeFactory.on_theme_changed()
 
 func _on_SetTheme_id_pressed(id) -> void:
@@ -479,8 +503,8 @@ func create_menu_show_panels(menu : MMMenuManager.MenuBase) -> void:
 
 func _on_ShowPanels_id_pressed(id) -> void:
 	var panel : String = layout.get_panel_list()[id]
-	layout.set_panel_visible(panel, !layout.is_panel_visible(panel))
-
+	layout.set_panel_visible(panel, not layout.is_panel_visible(panel))
+	update_menus()
 
 func create_menu_create(menu : MMMenuManager.MenuBase) -> void:
 	var gens = mm_loader.get_generator_list()
@@ -499,13 +523,14 @@ func _on_Create_id_pressed(id) -> void:
 func new_graph_panel() -> GraphEdit:
 	var graph_edit = preload("res://material_maker/panels/graph_edit/graph_edit.tscn").instantiate()
 	graph_edit.node_factory = $NodeFactory
-	projects.add_tab(graph_edit)
-	projects.current_tab = graph_edit.get_index()
+	projects_panel.get_projects().add_tab(graph_edit)
+	projects_panel.get_projects().current_tab = graph_edit.get_index()
 	return graph_edit
 
 func new_material() -> void:
 	var graph_edit = new_graph_panel()
 	graph_edit.new_material()
+	graph_edit.top_generator.set_current_mesh(current_mesh)
 	graph_edit.update_tab_title()
 	hierarchy.update_from_graph_edit(get_current_graph_edit())
 
@@ -522,9 +547,9 @@ func new_paint_project(obj_file_name = null) -> void:
 
 func create_paint_project(mesh, mesh_filename, texture_size, project_filename):
 	var paint_panel = load("res://material_maker/panels/paint/paint.tscn").instantiate()
-	projects.add_tab(paint_panel)
+	projects_panel.get_projects().add_tab(paint_panel)
 	paint_panel.init_project(mesh, mesh_filename, texture_size, project_filename)
-	projects.current_tab = paint_panel.get_index()
+	projects_panel.get_projects().current_tab = paint_panel.get_index()
 
 func load_project() -> void:
 	if OS.get_name() == "HTML5":
@@ -552,10 +577,10 @@ func on_html5_load_file(file_name, _file_type, file_data):
 
 func get_file_absolute_path(filename : String) -> String:
 	var file : FileAccess = FileAccess.open(filename, FileAccess.READ)
-	if ! file:
+	if file == null:
 		return ""
 	return file.get_path_absolute()
-		
+
 func do_load_projects(filenames) -> void:
 	var file_name : String = ""
 	for f in filenames:
@@ -570,7 +595,7 @@ func do_load_project(file_name : String) -> bool:
 	var status : bool = false
 	match file_name.get_extension():
 		"ptex":
-			status = do_load_material(file_name, false)
+			status = await do_load_material(file_name, false)
 			hierarchy.update_from_graph_edit(get_current_graph_edit())
 		"mmpp":
 			status = do_load_painting(file_name)
@@ -598,9 +623,13 @@ func create_new_graph_edit_if_needed() -> MMGraphEdit:
 
 func do_load_material(filename : String, update_hierarchy : bool = true) -> bool:
 	var graph_edit : MMGraphEdit = create_new_graph_edit_if_needed()
-	graph_edit.load_file(filename)
+	await graph_edit.load_file(filename)
 	if update_hierarchy:
 		hierarchy.update_from_graph_edit(get_current_graph_edit())
+	print("Current mesh: ", current_mesh)
+	print("Top generator: ", graph_edit.top_generator)
+	if current_mesh and graph_edit.top_generator:
+		graph_edit.top_generator.set_current_mesh(current_mesh)
 	return true
 
 func do_load_material_from_data(filename : String, data : String, update_hierarchy : bool = true) -> bool:
@@ -612,9 +641,9 @@ func do_load_material_from_data(filename : String, data : String, update_hierarc
 
 func do_load_painting(filename : String) -> bool:
 	var paint_panel = load("res://material_maker/panels/paint/paint.tscn").instantiate()
-	projects.add_tab(paint_panel)
+	projects_panel.get_projects().add_tab(paint_panel)
 	var status : bool = paint_panel.load_project(filename)
-	projects.current_tab = paint_panel.get_index()
+	projects_panel.get_projects().current_tab = paint_panel.get_index()
 	return status
 
 func load_material_from_website() -> void:
@@ -643,11 +672,11 @@ func save_project_as(project : Control = null) -> bool:
 	return false
 
 func save_all_projects() -> void:
-	for i in range(projects.get_tab_count()):
-		await projects.get_tab(i).save()
+	for i in range(projects_panel.get_projects().get_tab_count()):
+		await projects_panel.get_projects().get_tab(i).save()
 
 func close_project() -> void:
-	projects.close_tab()
+	projects_panel.get_projects().close_tab()
 
 func quit() -> void:
 	if quitting:
@@ -659,10 +688,11 @@ func quit() -> void:
 			quitting = false
 			return
 	if mm_globals.get_config("confirm_close_project"):
-		var result = await $VBoxContainer/Layout/SplitRight/ProjectsPanel/Projects.check_save_tabs()
+		var result = await $VBoxContainer/Layout/FlexibleLayout/Main/Projects.check_save_tabs()
 		if !result:
 			quitting = false
 			return
+	await mm_renderer.stop_rendering_thread()
 	dim_window()
 	get_tree().quit()
 	quitting = false
@@ -740,12 +770,11 @@ func edit_select_connected(end1 : String, end2 : String) -> void:
 	var node_list : Array = []
 	for n in graph_edit.get_selected_nodes():
 		node_list.push_back(n.name)
-	print(node_list)
 	while !node_list.is_empty():
 		var new_node_list = []
 		for c in graph_edit.get_connection_list():
 			if c[end1] in node_list:
-				var source = graph_edit.get_node(c[end2])
+				var source = graph_edit.get_node(NodePath(c[end2]))
 				if !source.selected:
 					new_node_list.push_back(c[end2])
 					source.selected = true
@@ -756,14 +785,14 @@ func edit_select_sources_is_disabled() -> bool:
 	return graph_edit == null or graph_edit.get_selected_nodes().is_empty()
 
 func edit_select_sources() -> void:
-	edit_select_connected("to", "from")
+	edit_select_connected("to_node", "from_node")
 
 func edit_select_targets_is_disabled() -> bool:
 	var graph_edit : MMGraphEdit = get_current_graph_edit()
-	return graph_edit.get_selected_nodes().is_empty()
+	return graph_edit.get_selected_nodes().is_empty() if graph_edit else true
 
 func edit_select_targets() -> void:
-	edit_select_connected("from", "to")
+	edit_select_connected("from_node", "to_node")
 
 func edit_duplicate_is_disabled() -> bool:
 	return edit_cut_is_disabled()
@@ -783,7 +812,7 @@ func edit_load_selection() -> void:
 	if files.size() == 1:
 		mm_globals.config.set_value("path", "selection", files[0].get_base_dir())
 		var file : FileAccess = FileAccess.open(files[0], FileAccess.READ)
-		if file.is_open():
+		if file != null:
 			var test_json_conv = JSON.new()
 			test_json_conv.parse(file.get_as_text())
 			graph_edit.do_paste(test_json_conv.get_data())
@@ -804,7 +833,7 @@ func edit_save_selection() -> void:
 	if files.size() == 1:
 		mm_globals.config.set_value("path", "selection", files[0].get_base_dir())
 		var file : FileAccess = FileAccess.open(files[0], FileAccess.WRITE)
-		if file.is_open():
+		if file != null:
 			file.store_string(JSON.stringify(graph_edit.serialize_selection()))
 			file.close()
 
@@ -893,7 +922,7 @@ func add_brush_to_library(index) -> void:
 	# Create thumbnail
 	var result = await get_current_project().get_brush_preview()
 	var image : Image = Image.new()
-	image.copy_from(result.get_data())
+	image.copy_from(result.get_image())
 	image.resize(32, 32)
 	brush_library_manager.add_item_to_library(index, status.text, image, data)
 
@@ -967,7 +996,7 @@ func about() -> void:
 
 func update_preview() -> void:
 	update_preview_2d()
-	update_preview_3d([ preview_3d, preview_3d_background ])
+	update_preview_3d([ preview_3d, projects_panel.preview_3d_background ])
 
 func get_current_node(graph_edit : MMGraphEdit) -> Node:
 	for n in graph_edit.get_children():
@@ -977,19 +1006,23 @@ func get_current_node(graph_edit : MMGraphEdit) -> Node:
 
 func update_preview_2d() -> void:
 	var graph_edit : MMGraphEdit = get_current_graph_edit()
-	if graph_edit != null:
-		for i in range(2):
-			var preview = graph_edit.get_current_preview(i)
-			if preview != null:
-				preview_2d[i].set_generator(preview.generator, preview.output_index)
-				if i == 0:
-					histogram.set_generator(preview.generator, preview.output_index)
-					preview_2d_background.set_generator(preview.generator, preview.output_index)
-			else:
-				preview_2d[i].set_generator(null)
-				if i == 0:
-					histogram.set_generator(null)
-					preview_2d_background.set_generator(null)
+	if not graph_edit:
+		return
+	var previews : Array = [ get_panel("Preview2D"), get_panel("Preview2D (2)") ]
+	for i in range(2):
+		var preview = graph_edit.get_current_preview(i)
+		var generator : MMGenBase = null
+		var output_index : int = -1
+		if preview == null or not is_instance_valid(preview.generator):
+			previews[i].clear()
+			continue
+		generator = preview.generator
+		output_index = preview.output_index
+		if previews[i] != null:
+			previews[i].set_generator(generator, output_index)
+		if i == 0:
+			histogram.set_generator(generator, output_index)
+			projects_panel.preview_2d_background.set_generator(generator, output_index)
 
 var current_gen_material = null
 func update_preview_3d(previews : Array, _sequential = false) -> void:
@@ -999,10 +1032,10 @@ func update_preview_3d(previews : Array, _sequential = false) -> void:
 		gen_material = graph_edit.top_generator.get_node("Material")
 	if gen_material != current_gen_material:
 		if current_gen_material != null and is_instance_valid(current_gen_material):
-			current_gen_material.set_3d_previews([])
+			current_gen_material.set_3d_previews([] as Array[ShaderMaterial])
 		current_gen_material = gen_material
 	if current_gen_material != null:
-		var materials : Array = []
+		var materials : Array[ShaderMaterial] = []
 		for p in previews:
 			materials.append_array(p.get_materials())
 		current_gen_material.set_3d_previews(materials)
@@ -1015,23 +1048,21 @@ func _on_Projects_tab_changed(_tab) -> void:
 	var project = get_current_project()
 	if project.has_method("project_selected"):
 		project.call("project_selected")
-	var new_tab = projects.get_current_tab_control()
+	var new_tab = projects_panel.get_projects().get_current_tab_control()
 	if new_tab != current_tab:
-# TODO: ???
-#		for c in get_incoming_connections():
-#			if c.method_name == "update_preview" or c.method_name == "update_preview_2d":
-#				c.source.disconnect(c.signal_name,Callable(self,c.method_name))
 		var new_graph_edit = null
 		if new_tab is GraphEdit:
 			new_graph_edit = new_tab
-			$VBoxContainer/Layout/SplitRight/ProjectsPanel/BackgroundPreviews.show()
-			$VBoxContainer/Layout/SplitRight/ProjectsPanel/PreviewUI.show()
+			$VBoxContainer/Layout/FlexibleLayout/Main/BackgroundPreviews.show()
+			$VBoxContainer/Layout/FlexibleLayout/Main/PreviewUI.show()
 			set_current_mode("material")
+			if current_mesh and new_graph_edit.top_generator:
+				new_graph_edit.top_generator.set_current_mesh(current_mesh)
 		else:
 			if new_tab.has_method("get_graph_edit"):
 				new_graph_edit = new_tab.get_graph_edit()
-			$VBoxContainer/Layout/SplitRight/ProjectsPanel/BackgroundPreviews.hide()
-			$VBoxContainer/Layout/SplitRight/ProjectsPanel/PreviewUI.hide()
+			$VBoxContainer/Layout/FlexibleLayout/Main/BackgroundPreviews.hide()
+			$VBoxContainer/Layout/FlexibleLayout/Main/PreviewUI.hide()
 			set_current_mode("paint")
 		current_tab = new_tab
 		if new_graph_edit != null:
@@ -1060,24 +1091,13 @@ func _notification(what : int) -> void:
 			OS.low_processor_usage_mode_sleep_usec = (1.0 / clamp(mm_globals.get_config("fps_limit"), FPS_LIMIT_MIN, FPS_LIMIT_MAX)) * 1_000_000
 
 func on_close_requested():
-			await get_tree().process_frame
-			quit()
+	await get_tree().process_frame
+	quit()
 
 func dim_window() -> void:
 	# Darken the UI to denote that the application is currently exiting
 	# (it won't respond to user input in this state).
 	modulate = Color(0.5, 0.5, 0.5)
-
-func show_background_preview_2d(button_pressed):
-	preview_2d_background.visible = button_pressed
-	if button_pressed:
-		preview_3d_background_button.button_pressed = false
-
-func show_background_preview_3d(button_pressed):
-	preview_3d_background.visible = button_pressed
-	preview_3d_background_panel.visible = button_pressed
-	if button_pressed:
-		preview_2d_background_button.button_pressed = false
 
 func generate_screenshots():
 	var result = await library.generate_screenshots(get_current_graph_edit())
@@ -1146,31 +1166,36 @@ func get_controls_at_position(pos : Vector2, parent : Control) -> Array:
 		return_value.append(parent)
 	return return_value
 
+func run_method_at_position(pos : Vector2i, method : String, parameters : Array) -> bool:
+	var controls : Array = get_controls_at_position(pos, self)
+	while ! controls.is_empty():
+		var next_controls = []
+		for control in controls:
+			if control == null:
+				continue
+			if control.has_method(method):
+				control.callv(method, parameters)
+				return true
+			if control.get_parent() != self:
+				next_controls.append(control.get_parent())
+		controls = next_controls
+	return false
+
 func on_files_dropped(files : PackedStringArray) -> void:
 	await get_tree().process_frame
 	for f in files:
 		var file : FileAccess = FileAccess.open(f, FileAccess.READ)
-		if ! file.is_open():
+		if file == null:
 			continue
 		f = file.get_path_absolute()
 		match f.get_extension():
 			"ptex":
 				do_load_material(f)
-			"obj":
-				await new_paint_project(f)
+			"obj", "glb", "gltf":
+				if ! run_method_at_position(get_global_mouse_position(), "on_drop_model_file", [ f ]):
+					await new_paint_project(f)
 			"bmp", "exr", "hdr", "jpg", "jpeg", "png", "svg", "tga", "webp":
-				var controls : Array = get_controls_at_position(get_global_mouse_position(), self)
-				while ! controls.is_empty():
-					var next_controls = []
-					for control in controls:
-						if control == null:
-							continue
-						if control.has_method("on_drop_image_file"):
-							control.on_drop_image_file(f)
-							return
-						if control.get_parent() != self:
-							next_controls.append(control.get_parent())
-					controls = next_controls
+				run_method_at_position(get_global_mouse_position(), "on_drop_image_file", [ f ])
 			"mme":
 				var test_json_conv = JSON.new()
 				test_json_conv.parse(file.get_as_text())
@@ -1185,8 +1210,8 @@ func set_tip_text(tip : String, timeout : float = 0.0):
 	tip = tip.replace("#LMB", "[img]res://material_maker/icons/lmb.tres[/img]")
 	tip = tip.replace("#RMB", "[img]res://material_maker/icons/rmb.tres[/img]")
 	tip = tip.replace("#MMB", "[img]res://material_maker/icons/mmb.tres[/img]")
-	$VBoxContainer/StatusBar/Tip.text = tip
-	var tip_timer : Timer = $VBoxContainer/StatusBar/Tip/Timer
+	$VBoxContainer/StatusBar/HBox/Tip.text = tip
+	var tip_timer : Timer = $VBoxContainer/StatusBar/HBox/Tip/Timer
 	tip_timer.stop()
 	if timeout > 0.0:
 		tip_timer.one_shot = true
@@ -1194,7 +1219,7 @@ func set_tip_text(tip : String, timeout : float = 0.0):
 		tip_timer.start()
 
 func _on_Tip_Timer_timeout():
-	$VBoxContainer/StatusBar/Tip.text = ""
+	$VBoxContainer/StatusBar/HBox/Tip.text = ""
 
 # Add dialog
 
@@ -1206,20 +1231,21 @@ func add_dialog(dialog : Window):
 
 # Accept dialog
 
-func accept_dialog(dialog_text : String, cancel_button : bool = false):
+func accept_dialog(dialog_text : String, cancel_button : bool = false, extra_buttons : Array[Dictionary] = []):
 	var dialog = preload("res://material_maker/windows/accept_dialog/accept_dialog.tscn").instantiate()
 	dialog.dialog_text = dialog_text
 	if cancel_button:
 		dialog.add_cancel_button("Cancel")
-	add_child(dialog)
-	var result = await dialog.ask()
-	return result
+	for b in extra_buttons:
+		dialog.add_button(b.label, b.right if b.has("right") else false, b.action)
+	add_dialog(dialog)
+	return await dialog.ask()
 
 # Current mesh
 
 func set_current_mesh(m : Mesh):
+	current_mesh = m
 	get_current_graph_edit().top_generator.set_current_mesh(m)
-	
 
 # Use this to investigate the connect bug
 

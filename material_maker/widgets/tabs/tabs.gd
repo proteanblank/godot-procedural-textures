@@ -1,6 +1,6 @@
 extends Panel
 
-var current_tab : int = -1 : 
+var current_tab : int = -1 :
 	get:
 		return current_tab
 	set(new_value):
@@ -13,12 +13,16 @@ var current_tab : int = -1 :
 		current_tab = new_value
 		node = get_child(current_tab)
 		node.visible = true
+		node.anchor_left = 0
+		node.anchor_right = 0
+		node.anchor_top = 0
+		node.anchor_bottom = 0
 		node.position = Vector2(0, $TabBar.size.y)
-		node.size = size - node.position
+		node.size = size - node.position - Vector2(6, 6)
 		$TabBar.current_tab = current_tab
 		emit_signal("tab_changed", current_tab)
 
-signal tab_changed
+signal tab_changed(tab : int)
 signal no_more_tabs
 
 func add_tab(control, legible_unique_name = false) -> void:
@@ -27,6 +31,7 @@ func add_tab(control, legible_unique_name = false) -> void:
 	move_child(control, $TabBar.get_tab_count())
 	$TabBar.add_tab(control.name)
 	control.visible = false
+	_on_Projects_resized()
 
 func set_current_tab(t : int):
 	current_tab = t
@@ -114,8 +119,15 @@ func _on_Tabs_tab_changed(tab) -> void:
 	current_tab = tab
 
 func _on_Projects_resized() -> void:
+	$TabBar.anchor_left = 0
+	$TabBar.anchor_right = 0
+	$TabBar.anchor_top = 0
+	$TabBar.anchor_bottom = 0
 	$TabBar.size.x = size.x
-
+	if current_tab >= 0:
+		var node = get_child(current_tab)
+		node.position = Vector2(0, $TabBar.size.y)
+		node.size = size - node.position - Vector2(6, 6)
 
 func _on_CrashRecoveryTimer_timeout():
 	for i in range($TabBar.get_tab_count()):
